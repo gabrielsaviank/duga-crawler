@@ -1,4 +1,4 @@
-const BaseCrawler = require("BaseCrawler");
+const BaseCrawler = require("./BaseCrawler");
 const logger = require("../logger");
 
 const GAAP_MAP = {
