@@ -14,8 +14,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/duga_crawler
       LOG_LEVEL: info
       CRAWLER_USER_AGENT: DugaCrawler/1.0 gabriel@companio.ee
-    # One-shot mode: run edgar and exit
-    command: node src/index.js --only=edgar
+    restart: unless-stopped
 
 volumes:
   mongo_data:
