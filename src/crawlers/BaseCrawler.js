@@ -1,5 +1,5 @@
 const axios = require("axios");
-const pLimit = require("p-limit");
+const pLimit = require('p-limit').default || require('p-limit');
 const logger = require("../logger");
 const {CrawlerSource, RawDocument, TrainingSample} = require("../db/models");
 
