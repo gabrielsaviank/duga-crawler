@@ -50,7 +50,7 @@ class SecEdgar extends BaseCrawler {
             ...options,
         });
 
-        this.samples = options.samples;
+        this.sampleSize = options.sampleSize || 500;
     }
 
     get name() {
@@ -78,7 +78,15 @@ class SecEdgar extends BaseCrawler {
     };
 
     async processItem(item) {
-        const response        = await this.fetch(item.url);
+        let response;
+
+        try {
+            response = await this.fetch(item.url);
+        } catch (exception) {
+            logger.error(`[SEC_EDGAR] Fetch failed for ${item.ref}: ${exception.message}`);
+            return { rawType: 'XBRL_COMPANY_FACTS', raw: null, samples: [] };
+        }
+
         const facts       = response.data?.facts?.['us-gaap'] || {};
         const entityName  = response.data?.entityName || item.name;
         const samples     = [];
@@ -103,19 +111,30 @@ class SecEdgar extends BaseCrawler {
         }
 
         logger.debug(`[SEC_EDGAR] ${entityName} → ${samples.length} proben`);
-    };
 
-    _sampleEvenly(companiesArray, nSize) {
-        if (companiesArray.length <= nSize) return companiesArray;
-        const step = companiesArray.length / nSize;
+        return {
+            rawType: 'XBRL_COMPANY_FACTS',
+            raw: {
+                cik:       item.cik,
+                ticker:    item.ticker,
+                entityName,
+                concepts:  Object.keys(facts).filter(c => GAAP_MAP[c]),
+                fetchedAt: new Date(),
+            },
+            samples,
+        };
+    }
+    _sampleEvenly(arr, n) {
+        console.log('sampleEvenly called with', arr.length, n);
+        if (arr.length <= n) return arr;
+        const step = arr.length / n;
         const result = [];
-
-        for (let i = 0; i < nSize; i++) {
-            result.push(companiesArray[Math.floor(i * step)]);
+        for (let i = 0; i < n; i++) {
+            result.push(arr[Math.floor(i * step)]);
         }
 
         return result;
-    };
+    }
 }
 
 module.exports = SecEdgar;

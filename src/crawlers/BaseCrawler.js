@@ -128,6 +128,14 @@ class BaseCrawler {
                 await this.sleep(this.delayMs);
                 const result = await this.processItem(item);
 
+                if (!result) {
+                    logger.warn(`[${this.name}] processItem returned nothing for ${ref}`);
+                    await this._markFailed(ref, new Error('processItem returned undefined'));
+                    failed++;
+
+                    return;
+                }
+
                 if (result.raw) {
                     await this._saveRaw(ref, result.rawType || 'GENERIC', result.raw);
                 }
