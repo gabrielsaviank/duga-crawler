@@ -1,19 +1,18 @@
 services:
   mongo:
     image: mongo:7
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
 
   crawler:
     build: .
     depends_on:
       - mongo
-    environment:
-      MONGO_URI: mongodb://mongo:27017/duga_crawler
-      LOG_LEVEL: info
-      CRAWLER_USER_AGENT: DugaCrawler/1.0 gabriel@companio.ee
+    env_file:
+      - .env
     restart: unless-stopped
 
 volumes:
