@@ -4,12 +4,13 @@ const logger = require('./logger');
 const db     = require('./db/connection');
 
 const SecEdgarCrawler = require("./crawlers/SecEdgarCrawler");
+const EERegisterCrawler = require("./crawlers/EERegisterCrawler");
 
 const ALL_CRAWLERS = [
     new SecEdgarCrawler({
         sampleSize: 500
     }),
-    // OTHER CRAWLERS EE,
+    new EERegisterCrawler()
 ];
 
 async function runOne(name) {
@@ -32,6 +33,11 @@ function scheduleAll() {
         ALL_CRAWLERS[0].run();
     });
     logger.info('Scheduler running. Waiting for next trigger...');
+
+    cron.schedule('0 3 * * 1', () => {
+        logger.info('Cron: starting ESTONIAN_REGISTER');
+        ALL_CRAWLERS[1].run();
+    });
 }
 
 async function main() {
