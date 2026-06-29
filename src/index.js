@@ -6,11 +6,13 @@ const db     = require('./db/connection');
 const SecEdgarCrawler = require("./crawlers/SecEdgarCrawler");
 const EERegisterCrawler = require("./crawlers/EERegisterCrawler");
 
+console.log('EERegisterCrawler loaded:', EERegisterCrawler);
+
 const ALL_CRAWLERS = [
     new SecEdgarCrawler({
         sampleSize: 500
     }),
-    new EERegisterCrawler()
+    new EERegisterCrawler({skipIfCrawled: false})
 ];
 
 async function runOne(name) {
