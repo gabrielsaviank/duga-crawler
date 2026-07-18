@@ -1,7 +1,13 @@
+const fs = require('fs');
+const fsPromises = require('fs/promises');
 const BaseCrawler = require('./BaseCrawler');
 const logger = require('../logger');
 
 const DATASETS = [
+    {
+        year: '2025',
+        url: 'https://avaandmed.ariregister.rik.ee/sites/default/files/4.2025_aruannete_elemendid_kuni_31052026_0.zip',
+    },
     {
         year: '2024',
         url: 'https://avaandmed.ariregister.rik.ee/sites/default/files/4.2024_aruannete_elemendid_kuni_31052026_0.zip',
@@ -16,107 +22,85 @@ const DATASETS = [
     },
 ];
 
-const FIELD_MAP = {
-    'Müügitulu':                                    { code: '3000', label: 'Revenue' },
-    'Raha':                                         { code: '1010', label: 'Cash and cash equivalents' },
-    'Käibevarad':                                   { code: '1100', label: 'Total current assets' },
-    'Põhivarad':                                    { code: '1500', label: 'Total non-current assets' },
-    'Varad':                                        { code: '1000', label: 'Total assets' },
-    'Lühiajalised kohustised':                      { code: '2000', label: 'Current liabilities' },
-    'Pikaajalised kohustised':                      { code: '2100', label: 'Non-current liabilities' },
-    'Omakapital':                                   { code: '3500', label: 'Equity' },
-    'Tööjõukulud':                                  { code: '5300', label: 'Employee expense' },
-    'Põhivarade kulum ja väärtuse langus':          { code: '5400', label: 'Depreciation and impairment loss' },
-    'Ärikasum (kahjum)':                            { code: '5900', label: 'Operating profit/loss' },
-    'Aruandeaasta kasum (kahjum)':                  { code: '6200', label: 'Annual period profit/loss' },
-    'Kasum (kahjum) enne tulumaksustamist':         { code: '6100', label: 'Profit/loss before tax' },
-    'Eelmiste perioodide jaotamata kasum (kahjum)': { code: '3510', label: 'Retained earnings/loss' },
-    'Netovara':                                     { code: '3500', label: 'Net assets' },
-    'Kohustised ja netovara':                       { code: '2900', label: 'Liabilities and net assets' },
-};
-
 class EERegisterCrawler extends BaseCrawler {
     constructor(options = {}) {
         super({
-            delayMs:     2000,
+            delayMs: 2000,
             concurrency: 1,
             ...options,
         });
+
+        this.rawDirectory =
+            options.rawDirectory ||
+            process.env.CRAWLER_RAW_DIRECTORY ||
+            '/data/raw/estonian-register';
     }
 
-    get name() { return 'ESTONIAN_REGISTER'; }
+    get name() {
+        return 'ESTONIAN_REGISTER';
+    }
 
     async getWorkItems() {
-        return DATASETS.map(ds => ({
-            ref:  `EE_ANNUAL_${ds.year}`,
-            url:  ds.url,
-            year: ds.year,
+        return DATASETS.map(dataset => ({
+            ref: `EE_ANNUAL_${dataset.year}`,
+            url: dataset.url,
+            year: dataset.year,
         }));
     }
 
     async processItem(item) {
-        logger.info(`[ESTONIAN_REGISTER] Downloading ${item.year} dataset`);
-
-        const resp = await this.fetch(item.url, {
-            responseType: 'arraybuffer',
-        });
-
-        const AdmZip = require('adm-zip');
-        const zip = new AdmZip(Buffer.from(resp.data));
-        const entries = zip.getEntries();
-
-        const indicatorsEntry = entries.find(e =>
-            e.entryName.includes('elemendid') || e.entryName.includes('4.')
+        logger.info(
+            `[ESTONIAN_REGISTER] Downloading ${item.year} dataset`
         );
 
-        if (!indicatorsEntry) {
-            logger.warn(`[ESTONIAN_REGISTER] No indicators file found in ${item.year} ZIP`);
-            logger.warn(`[ESTONIAN_REGISTER] Available files: ${entries.map(e => e.entryName).join(', ')}`);
-            return { rawType: 'EE_ANNUAL_REPORT', raw: null, samples: [] };
-        }
+        await fsPromises.mkdir(this.rawDirectory, {
+            recursive: true,
+        });
 
-        const csv = indicatorsEntry.getData().toString('utf8');
-        const samples = this._parseCsv(csv, item.year);
+        const filename = `annual-report-elements-${item.year}.zip`;
+        const filePath = path.join(this.rawDirectory, filename);
 
-        logger.info(`[ESTONIAN_REGISTER] ${item.year} → ${samples.length} samples`);
+        const response = await this.fetch(item.url, {
+            responseType: 'stream',
+            timeout: 10 * 60 * 1000,
+        });
+
+        const hash = crypto.createHash('sha256');
+        let sizeBytes = 0;
+
+        response.data.on('data', chunk => {
+            sizeBytes += chunk.length;
+            hash.update(chunk);
+        });
+
+        await pipeline(
+            response.data,
+            fs.createWriteStream(filePath)
+        );
+
+        const sha256 = hash.digest('hex');
+
+        logger.info(
+            `[ESTONIAN_REGISTER] Stored ${item.year}: ` +
+            `${sizeBytes} bytes at ${filePath}`
+        );
 
         return {
-            rawType: 'EE_ANNUAL_REPORT',
-            raw:     { year: item.year, rows: csv.split('\n').length },
-            samples,
+            rawType: 'EE_ANNUAL_REPORT_ZIP',
+            raw: {
+                year: item.year,
+                storageType: 'FILE',
+                filePath,
+                filename,
+                contentType: 'application/zip',
+                compression: 'zip',
+                sizeBytes,
+                sha256,
+                sourceUrl: item.url,
+                fetchedAt: new Date(),
+            },
+            samples: [],
         };
-    }
-
-    _parseCsv(csv, year) {
-        const lines  = csv.split('\n').filter(l => l.trim());
-        const samples = [];
-
-        for (const line of lines.slice(1, 5001)) {
-            const cols         = line.split(';').map(c => c.replace(/"/g, '').trim());
-            const reportId     = cols[0];
-            const elementName  = cols[2];
-            const elementLabel = cols[3];
-            const value        = parseFloat(cols[4]);
-
-            if (isNaN(value) || value === 0) continue;
-
-            const mapped = FIELD_MAP[elementName];
-            if (!mapped) continue;
-
-            samples.push({
-                description:      elementName,
-                accountCode:      mapped.code,
-                accountLabel:     mapped.label,
-                counterpartyName: null,
-                country:          'EE',
-                currency:         'EUR',
-                source:           this.name,
-                sourceRef:        `EE_${reportId}::${elementLabel}::${year}`,
-                confidence:       0.85,
-            });
-        }
-
-        return samples;
     }
 }
 

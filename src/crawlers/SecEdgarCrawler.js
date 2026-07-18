@@ -1,56 +1,15 @@
 const BaseCrawler = require("./BaseCrawler");
 const logger = require("../logger");
 
-const GAAP_MAP = {
-    // Revenue
-    'Revenues':                                                { code: '3000', label: 'Revenue' },
-    'RevenueFromContractWithCustomerExcludingAssessedTax':     { code: '3000', label: 'Revenue from contracts' },
-    'SalesRevenueNet':                                         { code: '3000', label: 'Net sales revenue' },
-    'ServiceRevenue':                                          { code: '3010', label: 'Service revenue' },
-    'SubscriptionRevenue':                                     { code: '3010', label: 'Subscription revenue' },
-    'AdvertisingRevenue':                                      { code: '3020', label: 'Advertising revenue' },
-    // COGS
-    'CostOfRevenue':                                           { code: '4000', label: 'Cost of revenue' },
-    'CostOfGoodsAndServicesSold':                              { code: '4000', label: 'Cost of goods and services' },
-    'CostOfGoodsSold':                                         { code: '4000', label: 'Cost of goods sold' },
-    'CostOfServices':                                          { code: '4010', label: 'Cost of services' },
-    // R&D
-    'ResearchAndDevelopmentExpense':                           { code: '5000', label: 'Research and development' },
-    // Sales & Marketing
-    'SellingAndMarketingExpense':                              { code: '5200', label: 'Sales and marketing' },
-    'MarketingExpense':                                        { code: '5200', label: 'Marketing expense' },
-    'AdvertisingExpense':                                      { code: '5210', label: 'Advertising expense' },
-    // G&A
-    'GeneralAndAdministrativeExpense':                         { code: '5100', label: 'General and administrative' },
-    'SellingGeneralAndAdministrativeExpense':                  { code: '5100', label: 'Selling, general and administrative' },
-    // Payroll
-    'LaborAndRelatedExpense':                                  { code: '5300', label: 'Labor and related costs' },
-    'SalariesAndWages':                                        { code: '5310', label: 'Salaries and wages' },
-    'EmployeeBenefitsAndShareBasedCompensation':               { code: '5320', label: 'Employee benefits' },
-    // Depreciation
-    'DepreciationAndAmortization':                             { code: '5400', label: 'Depreciation and amortization' },
-    'Depreciation':                                            { code: '5400', label: 'Depreciation' },
-    'AmortizationOfIntangibleAssets':                          { code: '5410', label: 'Amortization of intangibles' },
-    // Other operating
-    'LeaseAndRentalExpense':                                   { code: '5500', label: 'Lease and rental expense' },
-    'RestructuringCharges':                                    { code: '5510', label: 'Restructuring charges' },
-    // Finance
-    'InterestExpense':                                         { code: '6000', label: 'Interest expense' },
-    'InterestAndDebtExpense':                                  { code: '6000', label: 'Interest and debt expense' },
-    // Tax
-    'IncomeTaxExpenseBenefit':                                 { code: '6100', label: 'Income tax expense' },
-};
-
-
 class SecEdgar extends BaseCrawler {
-    constructor(options = []) {
+    constructor(options = {}) {
         super({
-            delayMs:     200,
+            delayMs: 250,
             concurrency: 1,
             ...options,
         });
 
-        this.sampleSize = options.sampleSize || 500;
+        this.sampleSize = options.sampleSize ?? 500;
     }
 
     get name() {
@@ -58,24 +17,35 @@ class SecEdgar extends BaseCrawler {
     }
 
     async getWorkItems() {
-        logger.info('[SEC_EDGAR] Firmenliste abrufen');
+        logger.info('[SEC_EDGAR] Fetching company list');
 
-        const resp = await this.fetch('https://www.sec.gov/files/company_tickers.json');
-        const companies = Object.values(resp.data);
-        const sampled = this._sampleEvenly(companies, this.sampleSize);
-        logger.info(`[SEC_EDGAR] Stichprobe ${sampled.length} ab ${companies.length} firma`);
+        const response = await this.fetch(
+            'https://www.sec.gov/files/company_tickers.json'
+        );
 
-        return sampled.map(c => {
-            const cik = String(c.cik_str).padStart(10, '0');
+        const companies = Object.values(response.data);
+
+        const sampledCompanies = this._sampleEvenly(
+            companies,
+            this.sampleSize
+        );
+
+        logger.info(
+            `[SEC_EDGAR] Sampled ${sampledCompanies.length} from ${companies.length} companies`
+        );
+
+        return sampledCompanies.map(company => {
+            const paddedCik = String(company.cik_str).padStart(10, '0');
+
             return {
-                ref:    `CIK_${cik}`,
-                url:    `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
-                cik:    c.cik_str,
-                ticker: c.ticker,
-                name:   c.title,
+                ref: `CIK_${paddedCik}`,
+                url: `https://data.sec.gov/api/xbrl/companyfacts/CIK${paddedCik}.json`,
+                cik: company.cik_str,
+                ticker: company.ticker,
+                name: company.title,
             };
         });
-    };
+    }
 
     async processItem(item) {
         let response;
@@ -83,57 +53,59 @@ class SecEdgar extends BaseCrawler {
         try {
             response = await this.fetch(item.url);
         } catch (exception) {
-            logger.error(`[SEC_EDGAR] Fetch failed for ${item.ref}: ${exception.message}`);
-            return { rawType: 'XBRL_COMPANY_FACTS', raw: null, samples: [] };
+            logger.error(
+                `[SEC_EDGAR] Fetch failed for ${item.ref}: ${exception.message}`
+            );
+
+            throw exception;
         }
 
-        const facts       = response.data?.facts?.['us-gaap'] || {};
-        const entityName  = response.data?.entityName || item.name;
-        const samples     = [];
+        const payload = response.data;
 
-        for (const [concept, conceptData] of Object.entries(facts)) {
-            const mapped = GAAP_MAP[concept];
-            if (!mapped) continue;
+        const rawSizeBytes = Buffer.byteLength(
+            JSON.stringify(payload),
+            'utf8'
+        );
 
-            const label = conceptData.label || mapped.label;
-
-            samples.push({
-                description:      label,
-                accountCode:      mapped.code,
-                accountLabel:     mapped.label,
-                counterpartyName: entityName,
-                country:          'US',
-                currency:         'USD',
-                source:           this.name,
-                sourceRef:        `${item.ref}::${concept}`,
-                confidence:       0.85,
-            });
-        }
-
-        logger.debug(`[SEC_EDGAR] ${entityName} → ${samples.length} proben`);
+        logger.debug(
+            `[SEC_EDGAR] ${item.ref} raw=${rawSizeBytes} bytes`
+        );
 
         return {
             rawType: 'XBRL_COMPANY_FACTS',
+
             raw: {
-                cik:       item.cik,
-                ticker:    item.ticker,
-                entityName,
-                concepts:  Object.keys(facts).filter(c => GAAP_MAP[c]),
-                fetchedAt: new Date(),
+                ...payload,
+
+                _dugaMetadata: {
+                    fetchedAt: new Date(),
+                    sourceUrl: item.url,
+                    rawSizeBytes,
+                    cik: item.cik,
+                    ticker: item.ticker,
+                    companyName: item.name,
+                },
             },
-            samples,
+
+            samples: [],
         };
     }
-    _sampleEvenly(arr, n) {
-        console.log('sampleEvenly called with', arr.length, n);
-        if (arr.length <= n) return arr;
-        const step = arr.length / n;
-        const result = [];
-        for (let i = 0; i < n; i++) {
-            result.push(arr[Math.floor(i * step)]);
+
+    _sampleEvenly(companies, sampleSize) {
+        if (companies.length <= sampleSize) {
+            return companies;
         }
 
-        return result;
+        const step = companies.length / sampleSize;
+        const sampled = [];
+
+        for (let index = 0; index < sampleSize; index++) {
+            sampled.push(
+                companies[Math.floor(index * step)]
+            );
+        }
+
+        return sampled;
     }
 }
 
