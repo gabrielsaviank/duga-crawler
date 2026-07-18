@@ -8,6 +8,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    restart: unless-stopped
 
   crawler:
     build: .
@@ -15,6 +16,11 @@ services:
       - mongo
     env_file:
       - .env
+    environment:
+      CRAWLER_RAW_DIRECTORY: /data/raw/estonian-register
+      TZ: America/Sao_Paulo
+    volumes:
+      - ./crawler-data:/data/raw
     restart: unless-stopped
 
 volumes:

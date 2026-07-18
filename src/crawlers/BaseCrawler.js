@@ -10,7 +10,7 @@ class BaseCrawler {
      * @param {number} options.concurrency   - parallel requests
      * @param {boolean} options.skipIfCrawled - skip refs already marked SUCCESS
      */
-    constructor(options) {
+    constructor(options = {}) {
         this.delayMs = options.delayMs ?? 500;
         this.concurrency = options.concurrency ?? 1;
         this.skipIfCrawled = options.skipIfCrawled ?? true;
@@ -56,16 +56,46 @@ class BaseCrawler {
 
     async _markStart(ref, url) {
         await CrawlerSource.findOneAndUpdate(
-            { crawlerName: this.name, sourceRef: ref },
-            { $set: { status: 'IN_PROGRESS', sourceUrl: url, fetchedAt: new Date() } },
-            { upsert: true }
-        )
+            {
+                crawlerName: this.name,
+                sourceRef: ref,
+            },
+            {
+                $set: {
+                    status: 'IN_PROGRESS',
+                    sourceUrl: url,
+                    fetchedAt: new Date(),
+                },
+                $unset: {
+                    errorMessage: '',
+                },
+            },
+            {
+                upsert: true,
+            }
+        );
     }
 
-    async _markCompleted(ref, { recordsRaw = 0, recordsSamples = 0 } = {}) {
+    async _markCompleted(
+        ref,
+        { recordsRaw = 0, recordsSamples = 0 } = {}
+    ) {
         await CrawlerSource.findOneAndUpdate(
-            { crawlerName: this.name, sourceRef: ref },
-            { $set: { status: 'SUCCESS', recordsRaw, recordsSamples, fetchedAt: new Date() } }
+            {
+                crawlerName: this.name,
+                sourceRef: ref,
+            },
+            {
+                $set: {
+                    status: 'SUCCESS',
+                    recordsRaw,
+                    recordsSamples,
+                    fetchedAt: new Date(),
+                },
+                $unset: {
+                    errorMessage: '',
+                },
+            }
         );
     }
 
@@ -77,12 +107,25 @@ class BaseCrawler {
     }
 
     async _saveRaw(ref, rawType, payload) {
-        await RawDocument.create({
-            crawlerName: this.name,
-            sourceRef: ref,
-            rawType,
-            payload
-        });
+        await RawDocument.findOneAndUpdate(
+            {
+                crawlerName: this.name,
+                sourceRef: ref,
+                rawType,
+            },
+            {
+                $set: {
+                    payload,
+                    updatedAt: new Date(),
+                },
+                $setOnInsert: {
+                    createdAt: new Date(),
+                },
+            },
+            {
+                upsert: true,
+            }
+        );
     }
 
     async _saveSamples(samples) {
