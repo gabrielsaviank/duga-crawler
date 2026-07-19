@@ -1,5 +1,8 @@
 const fs = require('fs');
 const fsPromises = require('fs/promises');
+const path = require('path');
+const crypto = require('crypto');
+const { pipeline } = require('stream/promises');
 const BaseCrawler = require('./BaseCrawler');
 const logger = require('../logger');
 
