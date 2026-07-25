@@ -13,14 +13,14 @@ const UkCouncilSpendCrawler = require('./crawlers/UkCouncilSpendCrawler');
 const forceRecrawl = process.env.FORCE_RECRAWL === 'true';
 
 const ALL_CRAWLERS = [
-    new SecEdgarCrawler({
-        sampleSize: 500,
-        skipIfCrawled: !forceRecrawl,
-    }),
-
-    new EERegisterCrawler({
-        skipIfCrawled: !forceRecrawl,
-    }),
+    // new SecEdgarCrawler({
+    //     sampleSize: 500,
+    //     skipIfCrawled: !forceRecrawl,
+    // }),
+    //
+    // new EERegisterCrawler({
+    //     skipIfCrawled: !forceRecrawl,
+    // }),
 
     new BeancountLedgerCrawler({
         skipIfCrawled: !forceRecrawl,
