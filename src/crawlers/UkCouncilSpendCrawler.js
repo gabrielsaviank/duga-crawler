@@ -37,7 +37,7 @@ class UkCouncilSpendCrawler extends BaseCrawler {
 
         const searchResponse = await this.fetch(
             `${CKAN_BASE}/api/3/action/package_search`,
-            { params: { q: 'spending over 500', rows: 20 } }
+            { params: { q: 'spending over 500', rows: 100 } }
         );
 
         const packages = searchResponse.data?.result?.results || [];
@@ -103,9 +103,28 @@ class UkCouncilSpendCrawler extends BaseCrawler {
         const response = await this.fetch(item.url, {
             responseType: 'text',
             timeout: 120 * 1000,
+            headers: { 'User-Agent': 'duga-crawler/1.0 (+bookkeeping research)' },
         });
 
         const content = String(response.data);
+        const contentType = String(response.headers['content-type'] || '');
+
+        if (contentType.includes('html') || /^\s*</.test(content)) {
+            logger.warn(`[UK_COUNCIL_SPEND] ${item.packageName}: not a CSV (${contentType || 'no content-type'}) — skipping ${item.url}`);
+
+            return {
+                rawType: 'UK_COUNCIL_SPEND_METADATA',
+                raw: {
+                    sourceUrl: item.url,
+                    deadLink: true,
+                    contentType,
+                    fetchedAt: new Date(),
+                },
+                samples: [],
+                insertedCount: 0,
+            };
+        }
+
         const sizeBytes = Buffer.byteLength(content, 'utf8');
         const sha256 = crypto
             .createHash('sha256')
