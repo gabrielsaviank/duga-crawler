@@ -3,9 +3,12 @@ require('dotenv').config();
 const cron = require('node-cron');
 const logger = require('./logger');
 const db = require('./db/connection');
+const { CrawlerSource, TrainingSample } = require('./db/models');
 
 const SecEdgarCrawler = require('./crawlers/SecEdgarCrawler');
 const EERegisterCrawler = require('./crawlers/EERegisterCrawler');
+const BeancountLedgerCrawler = require('./crawlers/BeancountLedgerCrawler');
+const UkCouncilSpendCrawler = require('./crawlers/UkCouncilSpendCrawler');
 
 const forceRecrawl = process.env.FORCE_RECRAWL === 'true';
 
@@ -16,6 +19,14 @@ const ALL_CRAWLERS = [
     }),
 
     new EERegisterCrawler({
+        skipIfCrawled: !forceRecrawl,
+    }),
+
+    new BeancountLedgerCrawler({
+        skipIfCrawled: !forceRecrawl,
+    }),
+
+    new UkCouncilSpendCrawler({
         skipIfCrawled: !forceRecrawl,
     }),
 ];
@@ -39,6 +50,70 @@ async function runOne(name) {
     }
 
     return crawler.run();
+}
+
+async function printStats() {
+    const sourceRows = await CrawlerSource.aggregate([
+        {
+            $group: {
+                _id: '$crawlerName',
+                files: { $sum: 1 },
+                success: {
+                    $sum: { $cond: [{ $eq: ['$status', 'SUCCESS'] }, 1, 0] },
+                },
+                failed: {
+                    $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] },
+                },
+                inProgress: {
+                    $sum: { $cond: [{ $eq: ['$status', 'IN_PROGRESS'] }, 1, 0] },
+                },
+                rawRecords: { $sum: '$recordsRaw' },
+                sampleRecords: { $sum: '$recordsSamples' },
+            },
+        },
+        { $sort: { _id: 1 } },
+    ]);
+
+    const sampleRows = await TrainingSample.aggregate([
+        {
+            $group: {
+                _id: '$source',
+                count: { $sum: 1 },
+            },
+        },
+        { $sort: { _id: 1 } },
+    ]);
+
+    // eslint-disable-next-line no-console
+    console.log('\n=== Crawler sources ===');
+    console.log(
+        `${'Crawler'.padEnd(24)} ${'Files'.padStart(8)} ${'Success'.padStart(8)} ${'Failed'.padStart(8)} ${'InProgress'.padStart(11)} ${'RawRecs'.padStart(10)} ${'SampleRecs'.padStart(12)}`
+    );
+    console.log('-'.repeat(85));
+
+    for (const row of sourceRows) {
+        console.log(
+            `${row._id.padEnd(24)} ${String(row.files).padStart(8)} ${String(row.success).padStart(8)} ${String(row.failed).padStart(8)} ${String(row.inProgress).padStart(11)} ${String(row.rawRecords).padStart(10)} ${String(row.sampleRecords).padStart(12)}`
+        );
+    }
+
+    if (!sourceRows.length) {
+        console.log('(no crawler_sources records yet)');
+    }
+
+    console.log('\n=== Training samples by source ===');
+    console.log(`${'Source'.padEnd(24)} ${'Count'.padStart(10)}`);
+    console.log('-'.repeat(36));
+
+    for (const row of sampleRows) {
+        console.log(`${String(row._id).padEnd(24)} ${String(row.count).padStart(10)}`);
+    }
+
+    if (!sampleRows.length) {
+        console.log('(no training_samples records yet)');
+    }
+
+    console.log('');
 }
 
 async function runAll() {
@@ -115,6 +190,13 @@ async function shutdown(signal) {
 
 async function main() {
     await db.connect();
+
+    if (process.argv.includes('--stats')) {
+        await printStats();
+        await db.disconnect();
+
+        process.exit(0);
+    }
 
     const onlyArg = process.argv.find(argument =>
         argument.startsWith('--only=')

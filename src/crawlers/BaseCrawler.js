@@ -107,6 +107,26 @@ class BaseCrawler {
     }
 
     async _saveRaw(ref, rawType, payload) {
+        const payloadBytes = Buffer.byteLength(
+            JSON.stringify(payload),
+            'utf8'
+        );
+
+        if (payloadBytes > 512 * 1024) {
+            logger.warn(
+                `[${this.name}] Raw payload for ${ref} is ${payloadBytes} bytes ` +
+                `(> 512KB) — storing metadata only`
+            );
+
+            payload = {
+                _dugaPayloadOmitted: true,
+                payloadSizeBytes: payloadBytes,
+                ...(payload && payload._dugaMetadata
+                    ? { _dugaMetadata: payload._dugaMetadata }
+                    : {}),
+            };
+        }
+
         await RawDocument.findOneAndUpdate(
             {
                 crawlerName: this.name,
@@ -183,7 +203,8 @@ class BaseCrawler {
                     await this._saveRaw(ref, result.rawType || 'GENERIC', result.raw);
                 }
 
-                const upserted = await this._saveSamples(result.samples || []);
+                const upserted = result.insertedCount ??
+                    (await this._saveSamples(result.samples || []));
                 samples += upserted;
 
                 await this._markCompleted(ref, {
