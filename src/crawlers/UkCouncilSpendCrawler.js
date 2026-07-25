@@ -8,16 +8,32 @@ const CKAN_BASE = 'https://ckan.publishing.service.gov.uk';
 const MIN_AMOUNT = 500;
 const MAX_SAMPLES_PER_FILE = 500;
 
-// Alias order matters: _normaliseRow picks the first matching alias, so
-// category lists expense-type columns before service/directorate/department ones.
 const HEADER_ALIASES = {
     supplier: ['suppliername', 'supplier', 'bodyname', 'vendorname', 'payeename'],
     date: ['paymentdate', 'date', 'paiddate', 'transactiondate'],
     amount: ['amount', 'netamount', 'amountpaid', 'total', 'value', 'paymentamount'],
     category: [
-        'expenditurecategory', 'detailedexpensestype', 'expensescategory', 'expensetype',
-        'category', 'service', 'servicelabel', 'servicearea', 'directorate',
-        'department', 'organisationalunit', 'costcentre', 'servicedivision',
+        // GPC merchant categories (standardised across councils — highest value)
+        'merchantcategorygroupdescription',
+        'merchantcategorygroup',
+        'merchantcategorycodedescription',
+        'merchantcategorycode',
+        'mechantcategorygroupdescription',      // typo variant seen in the wild
+        'mechantcategorycodedescription',       // typo variant
+        // council statement columns
+        'expenditurecategory',
+        'detailedexpensestype',
+        'expensetype',
+        'expensescategory',
+        'category',
+        'servicelabel',
+        'service',
+        'servicearea',
+        'directorate',
+        'department',
+        'costcentre',
+        'servicedivision',
+        'organisationalunit',
     ],
 };
 
