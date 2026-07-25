@@ -45,7 +45,7 @@ class UkCouncilSpendCrawler extends BaseCrawler {
             ...options,
         });
 
-        this.maxSamples = options.maxSamples ?? 10000;
+        this.maxSamples = options.maxSamples ?? 50000;
         this.samplesThisRun = 0;
     }
 
