@@ -6,12 +6,19 @@ const { TrainingSample } = require('../db/models');
 
 const CKAN_BASE = 'https://ckan.publishing.service.gov.uk';
 const MIN_AMOUNT = 500;
+const MAX_SAMPLES_PER_FILE = 500;
 
+// Alias order matters: _normaliseRow picks the first matching alias, so
+// category lists expense-type columns before service/directorate/department ones.
 const HEADER_ALIASES = {
     supplier: ['suppliername', 'supplier', 'bodyname', 'vendorname', 'payeename'],
     date: ['paymentdate', 'date', 'paiddate', 'transactiondate'],
     amount: ['amount', 'netamount', 'amountpaid', 'total', 'value', 'paymentamount'],
-    category: ['expensetype', 'expensescategory', 'category', 'service', 'department', 'costcentre', 'servicedivision'],
+    category: [
+        'expenditurecategory', 'detailedexpensestype', 'expensescategory', 'expensetype',
+        'category', 'service', 'servicelabel', 'servicearea', 'directorate',
+        'department', 'organisationalunit', 'costcentre', 'servicedivision',
+    ],
 };
 
 class UkCouncilSpendCrawler extends BaseCrawler {
@@ -141,8 +148,9 @@ class UkCouncilSpendCrawler extends BaseCrawler {
 
         const { samples, skipped } = this._mapRecords(item.url, records);
 
+        const fileCappedSamples = samples.slice(0, MAX_SAMPLES_PER_FILE);
         const budget = this.maxSamples - this.samplesThisRun;
-        const cappedSamples = samples.slice(0, budget);
+        const cappedSamples = fileCappedSamples.slice(0, budget);
 
         const { insertedCount, duplicateCount } =
             await this._insertSamples(cappedSamples);
@@ -178,7 +186,7 @@ class UkCouncilSpendCrawler extends BaseCrawler {
         let skipped = 0;
 
         for (let rowIndex = 0; rowIndex < records.length; rowIndex++) {
-            const row = this._normalizeRow(records[rowIndex]);
+            const row = this._normaliseRow(records[rowIndex]);
 
             const supplier = (row.supplier || '').trim();
             if (!supplier) {
@@ -193,6 +201,7 @@ class UkCouncilSpendCrawler extends BaseCrawler {
             }
 
             const category = (row.category || '').trim();
+            const date = this._parseDate(row.date);
 
             samples.push({
                 description: category
@@ -203,6 +212,8 @@ class UkCouncilSpendCrawler extends BaseCrawler {
                     : 'uncategorised',
                 accountLabel: category || undefined,
                 counterpartyName: supplier,
+                amount,
+                date: date || undefined,
                 country: 'UK',
                 currency: 'GBP',
                 source: 'UK_COUNCIL_SPEND',
@@ -213,25 +224,70 @@ class UkCouncilSpendCrawler extends BaseCrawler {
             });
         }
 
+        if (
+            samples.length > 0 &&
+            samples.every((sample) => sample.accountCode === 'uncategorised')
+        ) {
+            const headers = records.length > 0 ? Object.keys(records[0]) : [];
+
+            logger.warn(
+                `[UK_COUNCIL_SPEND] ${resourceUrl}: all ${samples.length} samples ` +
+                `uncategorised — actual headers: ${headers.join(', ')}`
+            );
+        }
+
         return { samples, skipped };
     }
 
-    _normalizeRow(record) {
-        const normalized = {};
+    _normaliseRow(record) {
+        const valuesByHeader = {};
 
         for (const [key, value] of Object.entries(record)) {
-            const normalizedKey = key
+            const normalisedKey = key
                 .toLowerCase()
                 .replace(/[^a-z0-9]/g, '');
 
-            for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
-                if (aliases.includes(normalizedKey) && !(field in normalized)) {
-                    normalized[field] = value;
+            if (!(normalisedKey in valuesByHeader)) {
+                valuesByHeader[normalisedKey] = value;
+            }
+        }
+
+        const normalised = {};
+
+        for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
+            for (const alias of aliases) {
+                if (alias in valuesByHeader) {
+                    normalised[field] = valuesByHeader[alias];
+                    break;
                 }
             }
         }
 
-        return normalized;
+        return normalised;
+    }
+
+    _parseDate(rawDate) {
+        if (rawDate === undefined || rawDate === null) return null;
+
+        const text = String(rawDate).trim();
+        if (!text) return null;
+
+        const dmyMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (dmyMatch) {
+            const day = Number(dmyMatch[1]);
+            const month = Number(dmyMatch[2]);
+            const year = Number(dmyMatch[3]);
+
+            if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+            const date = new Date(Date.UTC(year, month - 1, day));
+
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+
+        const parsed = new Date(text);
+
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
 
     _parseAmount(rawAmount) {

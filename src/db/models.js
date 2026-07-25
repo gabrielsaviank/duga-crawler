@@ -34,6 +34,8 @@ const trainingSampleSchema = new mongoose.Schema({
     accountCode:      { type: String, required: true },
     accountLabel:     String,
     counterpartyName: String,
+    amount:           { type: Number, index: true },
+    date:             Date,
     country:          String,
     currency:         String,
     taxRate:          Number,
