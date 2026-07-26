@@ -36,6 +36,7 @@ const trainingSampleSchema = new mongoose.Schema({
     counterpartyName: String,
     amount:           { type: Number, index: true },
     date:             Date,
+    inferred:         { type: Boolean, default: false },
     country:          String,
     currency:         String,
     taxRate:          Number,

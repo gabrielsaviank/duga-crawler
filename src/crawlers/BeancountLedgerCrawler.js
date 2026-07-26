@@ -3,6 +3,11 @@ const BaseCrawler = require('./BaseCrawler');
 const logger = require('../logger');
 const { TrainingSample } = require('../db/models');
 
+/*
+ * Well-known public plaintext-accounting ledgers.
+ * `recurse: true` also scans one directory level down via the GitHub
+ * contents API (for repos that nest ledgers in chapter/example subdirs).
+ */
 const CANDIDATE_REPOS = [
     {
         owner: 'beancount',
@@ -10,8 +15,54 @@ const CANDIDATE_REPOS = [
         path: 'examples',
     },
     {
+        owner: 'simonmichael',
+        repo: 'hledger',
+        path: 'examples',
+        recurse: true,
+    },
+    {
         owner: 'adept',
         repo: 'full-fledged-hledger',
+        path: '',
+        recurse: true,
+    },
+    {
+        owner: 'beancount',
+        repo: 'fava',
+        path: 'contrib/examples',
+    },
+    {
+        owner: 'andreasgerstmayr',
+        repo: 'fava-dashboards',
+        path: 'example',
+        recurse: true,
+    },
+    {
+        owner: 'jbms',
+        repo: 'beancount-import',
+        path: 'testdata',
+        recurse: true,
+    },
+    {
+        owner: 'mckelvin',
+        repo: 'beancount-boilerplate-cn',
+        path: 'ledger',
+        recurse: true,
+    },
+    {
+        owner: 'deb-sig',
+        repo: 'double-entry-generator',
+        path: 'example',
+        recurse: true,
+    },
+    {
+        owner: 'trevorld',
+        repo: 'r-ledger',
+        path: 'inst/extdata',
+    },
+    {
+        owner: 'wileykestner',
+        repo: 'beancount-example',
         path: '',
     },
 ];
@@ -32,44 +83,28 @@ class BeancountLedgerCrawler extends BaseCrawler {
     }
 
     get name() {
-        return 'BEANCOUNT';
+        return 'BEANCOUNT_LEDGER';
     }
 
     async getWorkItems() {
         const items = [];
 
         for (const candidate of CANDIDATE_REPOS) {
-            const apiUrl =
-                `https://api.github.com/repos/${candidate.owner}/${candidate.repo}` +
-                `/contents/${candidate.path}`;
+            const entries = await this._listDirectory(candidate, candidate.path);
 
-            let response;
-            try {
-                response = await this.fetch(apiUrl, {
-                    headers: {
-                        Accept: 'application/vnd.github+json',
-                        'User-Agent': 'duga-crawler',
-                    },
-                });
-            } catch (exception) {
-                logger.warn(
-                    `[BEANCOUNT] Listing failed for ${candidate.owner}/${candidate.repo}/${candidate.path}: ${exception.message}`
-                );
-                continue;
+            const ledgerFiles = entries.filter(entry => this._isLedgerFile(entry));
+
+            if (candidate.recurse) {
+                const directories = entries.filter(entry => entry.type === 'dir');
+
+                for (const directory of directories) {
+                    const nested = await this._listDirectory(candidate, directory.path);
+                    ledgerFiles.push(...nested.filter(entry => this._isLedgerFile(entry)));
+                }
             }
 
-            const entries = Array.isArray(response.data)
-                ? response.data
-                : [response.data];
-
-            const ledgerFiles = entries.filter(entry =>
-                entry.type === 'file' &&
-                /\.(beancount|journal)$/i.test(entry.name) &&
-                entry.download_url
-            );
-
             logger.info(
-                `[BEANCOUNT] ${candidate.owner}/${candidate.repo}/${candidate.path || '.'}: ` +
+                `[BEANCOUNT_LEDGER] ${candidate.owner}/${candidate.repo}/${candidate.path || '.'}: ` +
                 `${ledgerFiles.length} ledger files`
             );
 
@@ -84,6 +119,37 @@ class BeancountLedgerCrawler extends BaseCrawler {
         }
 
         return items;
+    }
+
+    async _listDirectory(candidate, path) {
+        const apiUrl =
+            `https://api.github.com/repos/${candidate.owner}/${candidate.repo}` +
+            `/contents/${path}`;
+
+        try {
+            const response = await this.fetch(apiUrl, {
+                headers: {
+                    Accept: 'application/vnd.github+json',
+                    'User-Agent': 'duga-crawler',
+                },
+            });
+
+            return Array.isArray(response.data)
+                ? response.data
+                : [response.data];
+        } catch (exception) {
+            logger.warn(
+                `[BEANCOUNT_LEDGER] Listing failed for ${candidate.owner}/${candidate.repo}/${path}: ${exception.message}`
+            );
+
+            return [];
+        }
+    }
+
+    _isLedgerFile(entry) {
+        return entry.type === 'file' &&
+            /\.(beancount|journal)$/i.test(entry.name) &&
+            Boolean(entry.download_url);
     }
 
     async processItem(item) {
@@ -105,7 +171,7 @@ class BeancountLedgerCrawler extends BaseCrawler {
             await this._insertSamples(parsed.samples);
 
         logger.info(
-            `[BEANCOUNT] ${item.path}: lines=${lines.length} ` +
+            `[BEANCOUNT_LEDGER] ${item.path}: lines=${lines.length} ` +
             `inserted=${insertedCount} duplicates=${duplicateCount} ` +
             `skipped=${parsed.skipped} unbalanced=${parsed.unbalanced} ` +
             `withCost=${parsed.withCost}`
@@ -150,6 +216,7 @@ class BeancountLedgerCrawler extends BaseCrawler {
             }
 
             const headerLineNumber = index + 1;
+            const txnDate = new Date(headerMatch[1]);
             const { payee, narration } = this._parsePayeeNarration(headerMatch[2]);
 
             const postings = [];
@@ -192,8 +259,17 @@ class BeancountLedgerCrawler extends BaseCrawler {
             } else if (!this._isBalanced(postings)) {
                 unbalanced++;
             } else {
+                const inferredLeg = this._inferMissingAmount(postings);
+
                 for (const posting of postings) {
-                    if (posting.amount === null || !posting.currency) {
+                    const isInferred =
+                        inferredLeg !== null && inferredLeg.posting === posting;
+
+                    const amount = isInferred ? inferredLeg.amount : posting.amount;
+                    const currency = posting.currency ||
+                        (isInferred ? inferredLeg.currency : null);
+
+                    if (amount === null || !currency) {
                         skipped++;
                         continue;
                     }
@@ -207,8 +283,11 @@ class BeancountLedgerCrawler extends BaseCrawler {
                         accountCode: posting.account,
                         accountLabel: this._humanizeAccount(posting.account),
                         counterpartyName: payee || undefined,
-                        currency: posting.currency,
-                        source: 'BEANCOUNT',
+                        amount,
+                        date: txnDate,
+                        currency,
+                        ...(isInferred ? { inferred: true } : {}),
+                        source: 'BEANCOUNT_LEDGER',
                         sourceRef: crypto
                             .createHash('sha256')
                             .update(`${fileUrl}:${posting.lineNumber}`)
@@ -281,6 +360,41 @@ class BeancountLedgerCrawler extends BaseCrawler {
         }
 
         return true;
+    }
+
+    /*
+     * Beancount auto-balances at most one posting per transaction: a posting
+     * with no amount. Infer it as the negative sum of the other postings,
+     * but only when exactly one currency has a non-zero sum (same rule as
+     * _isBalanced).
+     */
+    _inferMissingAmount(postings) {
+        const missing = postings.filter(posting => posting.amount === null);
+
+        if (missing.length !== 1) return null;
+
+        const sumsByCurrency = new Map();
+
+        for (const posting of postings) {
+            if (posting.amount === null || !posting.currency) {
+                continue;
+            }
+
+            sumsByCurrency.set(
+                posting.currency,
+                (sumsByCurrency.get(posting.currency) || 0) + posting.amount
+            );
+        }
+
+        const nonZero = [...sumsByCurrency.entries()].filter(
+            ([, sum]) => Math.abs(sum) > BALANCE_TOLERANCE
+        );
+
+        if (nonZero.length !== 1) return null;
+
+        const [currency, sum] = nonZero[0];
+
+        return { posting: missing[0], amount: -sum, currency };
     }
 
     _humanizeAccount(account) {
