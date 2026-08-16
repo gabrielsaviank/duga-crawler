@@ -9,6 +9,7 @@ const SecEdgarCrawler = require('./crawlers/SecEdgarCrawler');
 const EERegisterCrawler = require('./crawlers/EERegisterCrawler');
 const BeancountLedgerCrawler = require('./crawlers/BeancountLedgerCrawler');
 const UkCouncilSpendCrawler = require('./crawlers/UkCouncilSpendCrawler');
+const SocrataCheckbookCrawler = require('./crawlers/SocrataCheckbookCrawler');
 
 const forceRecrawl = process.env.FORCE_RECRAWL === 'true';
 
@@ -27,6 +28,10 @@ const ALL_CRAWLERS = [
     }),
 
     new UkCouncilSpendCrawler({
+        skipIfCrawled: !forceRecrawl,
+    }),
+
+    new SocrataCheckbookCrawler({
         skipIfCrawled: !forceRecrawl,
     }),
 ];
