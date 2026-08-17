@@ -18,6 +18,16 @@ const PAGE_SIZE = 5000;
  *
  * Adding Dallas/Houston etc. is config-only: append another entry with
  * its own domain/datasetId/fieldMap.
+ *
+ * Texas State DIR Cooperative Contract Sales FY2010-2025 (verified against
+ * https://data.texas.gov/api/views/w64c-ndf7 on 2026-08-17):
+ *   vendor_name       - vendor legal name
+ *   order_date        - order date (missing on some rows -> date omitted)
+ *   purchase_amount   - total purchase amount (quantity x unit price)
+ *   contract_subtype  - expense description (e.g. 'IT Staffing Services')
+ *   contract_number/contract_type - most specific classification available
+ *   (no object/dept/fund codes exist at state level; customer_name is the
+ *    buying agency but there is no agency code column to pair it with)
  */
 const DEFAULT_DATASETS = [
     {
@@ -37,6 +47,21 @@ const DEFAULT_DATASETS = [
             departmentLabel: 'dept_nm',
             fundCode: 'fund_cd',
             fundLabel: 'fund_nm',
+        },
+    },
+    {
+        domain: 'data.texas.gov',
+        datasetId: 'w64c-ndf7',
+        source: 'US_TX_STATE',
+        country: 'US',
+        currency: 'USD',
+        fieldMap: {
+            vendor: 'vendor_name',
+            date: 'order_date',
+            amount: 'purchase_amount',
+            description: 'contract_subtype',
+            objectCode: 'contract_number',
+            objectLabel: 'contract_type',
         },
     },
 ];
